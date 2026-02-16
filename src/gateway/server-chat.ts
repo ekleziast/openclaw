@@ -2,6 +2,7 @@ import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
+import { defaultRuntime } from "../runtime.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
@@ -374,14 +375,21 @@ export function createAgentEventHandler({
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
 
+    // Always populate the chat buffer for assistant text so emitChatFinal
+    // has content even if sessionKey was temporarily unresolved during deltas.
+    if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
+      if (!isSilentReplyText(evt.data.text, SILENT_REPLY_TOKEN)) {
+        chatRunState.buffers.set(clientRunId, evt.data.text);
+      }
+      if (sessionKey) {
+        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
+      }
+    }
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received the event above via broadcastToConnIds.
       if (!isToolEvent || toolVerbose !== "off") {
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
-      }
-      if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
       }
     }
 
@@ -409,18 +417,12 @@ export function createAgentEventHandler({
           evt.data?.error,
         );
       } else {
-        // Fallback when sessionKey is undefined: attempt to resolve from registry
-        const resolvedKey = resolveSessionKeyForRun(evt.runId);
-        if (resolvedKey) {
-          emitChatFinal(
-            resolvedKey,
-            evt.runId,
-            evt.seq,
-            lifecyclePhase === "error" ? "error" : "done",
-            evt.data?.error,
-          );
-        }
-        // If still undefined, chat:final will not be emitted, but at least we tried
+        // sessionKey is undefined — resolveSessionKeyForRun already returned undefined
+        // at the top of this handler (line 329). Log a warning so this failure is visible.
+        defaultRuntime.error(
+          `[gateway] chat:final not delivered: sessionKey unresolved for ` +
+            `lifecycle:${lifecyclePhase} runId=${evt.runId} clientRunId=${clientRunId}`,
+        );
       }
     } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
       chatRunState.abortedRuns.delete(clientRunId);
