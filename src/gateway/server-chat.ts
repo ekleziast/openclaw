@@ -417,8 +417,8 @@ export function createAgentEventHandler({
           evt.data?.error,
         );
       } else {
-        // sessionKey is undefined — resolveSessionKeyForRun already returned undefined
-        // at the top of this handler (line 329). Log a warning so this failure is visible.
+        // sessionKey is undefined - resolveSessionKeyForRun already returned undefined
+        // at the top of this handler (createAgentEventHandler). Log a warning so this failure is visible.
         defaultRuntime.error(
           `[gateway] chat:final not delivered: sessionKey unresolved for ` +
             `lifecycle:${lifecyclePhase} runId=${evt.runId} clientRunId=${clientRunId}`,
